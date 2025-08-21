@@ -1,37 +1,24 @@
-// exports_shim.c
-// Build in the same package directory that has `import "C"`.
-// We define weak, used stubs so they are exported and not GC’d.
-
+// exports_shim.c  (compiled into the main xash binary)
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-__attribute__((weak, used))
-void SV_SaveGameComment(const char *comment) {
-    (void)comment;
-}
-
-__attribute__((weak, used))
-int Server_GetPhysicsInterface(int version, void *pphysiface, void *server) {
-    (void)version; (void)pphysiface; (void)server;
+// Use varargs to avoid cdecl cleanup mismatches on i386.
+__attribute__((visibility("default"), weak))
+int SV_SaveGameComment(...) {
     return 0; // “not provided”
 }
 
-__attribute__((weak, used))
-int Server_GetBlendingInterface(int version, void *ppblendiface, void *server) {
-    (void)version; (void)ppblendiface; (void)server;
-    return 0; // “not provided”
+__attribute__((visibility("default"), weak))
+int Server_GetPhysicsInterface(...) {
+    return 0; // “no physics interface”
 }
 
-/* Reference them so the linker definitely keeps them even with GC/LTO */
-__attribute__((used))
-static void *xash_export_keep[] = {
-    (void*)&SV_SaveGameComment,
-    (void*)&Server_GetPhysicsInterface,
-    (void*)&Server_GetBlendingInterface,
-};
+__attribute__((visibility("default"), weak))
+int Server_GetBlendingInterface(...) {
+    return 0; // “no blending interface”
+}
 
 #ifdef __cplusplus
 }
 #endif
-

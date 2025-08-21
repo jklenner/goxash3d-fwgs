@@ -56,13 +56,39 @@ func (x *Xash3DNetwork) RegisterNetCallbacks() {
 // Recvfrom Receives packets from a custom Go channel (`Incoming`),
 // simulating non-blocking socket reads and populating sockaddr structures as needed.
 // i386 requires 10ms timeout.
-func (x *Xash3DNetwork) Sendto(sock Int, packets **C.char, sizes *C.size_t,
-    packet_count Int, seq_num Int, to *C.struct_sockaddr_storage, tolen SizeT) Int {
+func (x *Xash3DNetwork) Recvfrom(
+	sockfd Int,
+	buf unsafe.Pointer,
+	length Int,
+	flags Int,
+	src_addr *Sockaddr,
+	addrlen *SocklenT,
+) Int {
+	pkt := x.recvfrom()
 
-    // DO NOT touch the packet data at all:
-    return packet_count
+	if pkt == nil {
+		C.set_errno(C.EAGAIN)
+		return Int(-1)
+	}
+
+	n := len(pkt.Data)
+	if n > int(length) {
+		n = int(length) // truncate
+	}
+	dst := unsafe.Slice((*byte)(buf), n)
+	copy(dst, pkt.Data)
+
+	if src_addr != nil && addrlen != nil {
+		csa := (*C.struct_sockaddr_in)(unsafe.Pointer(src_addr))
+		csa.sin_family = C.AF_INET
+		csa.sin_port = C.htons(12345) // dummy port
+		ip := uint32(pkt.IP[0])<<24 | uint32(pkt.IP[1])<<16 | uint32(pkt.IP[2])<<8 | uint32(pkt.IP[3])
+		csa.sin_addr.s_addr = C.uint32_t(C.htonl(C.uint32_t(ip)))
+		*addrlen = SocklenT(unsafe.Sizeof(*csa))
+	}
+
+	return Int(n)
 }
-
 
 // Sendto Sends packet data to a custom Go channel (`Outgoing`),
 // simulating outgoing UDP traffic by extracting destination IP and payload.

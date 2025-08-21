@@ -92,33 +92,11 @@ func (x *Xash3DNetwork) Recvfrom(
 
 // Sendto Sends packet data to a custom Go channel (`Outgoing`),
 // simulating outgoing UDP traffic by extracting destination IP and payload.
-func (x *Xash3DNetwork) Sendto(
-    sock Int,
-    packets **C.char,
-    sizes *C.size_t,
-    packet_count Int,
-    seq_num Int,
-    to *C.struct_sockaddr_storage,
-    tolen SizeT,
-) Int {
-    count := int(packet_count)
-    ipBytes := extractIP(to)
+func (x *Xash3DNetwork) Sendto(sock Int, packets **C.char, sizes *C.size_t,
+    packet_count Int, seq_num Int, to *C.struct_sockaddr_storage, tolen SizeT) Int {
 
-    // Walk the arrays
-    for i := 0; i < count; i++ {
-        p := *(**C.char)(unsafe.Pointer(uintptr(unsafe.Pointer(packets)) + uintptr(i)*unsafe.Sizeof(uintptr(0))))
-        sz := int(*(*C.size_t)(unsafe.Pointer(uintptr(unsafe.Pointer(sizes)) + uintptr(i)*unsafe.Sizeof(*sizes))))
-
-        // IMPORTANT: copy out, because the engine will free its buffers
-        // as soon as we return.
-        data := make([]byte, sz)
-        copy(data, unsafe.Slice((*byte)(unsafe.Pointer(p)), sz))
-
-        x.sendto(Packet{IP: ipBytes, Data: data})
-    }
-
-    // Tell the engine we consumed them all.
-    return Int(count)
+    // DO NOT touch the packet data at all:
+    return packet_count
 }
 
 

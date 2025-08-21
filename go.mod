@@ -1,4 +1,4 @@
-module github.com/yohimik/goxash3d-fwgs
+module github.com/jklenner/goxash3d-fwgs
 
 go 1.24.4
 

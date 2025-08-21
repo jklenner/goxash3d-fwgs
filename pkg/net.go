@@ -56,48 +56,98 @@ func (x *Xash3DNetwork) RegisterNetCallbacks() {
 // Recvfrom Receives packets from a custom Go channel (`Incoming`),
 // simulating non-blocking socket reads and populating sockaddr structures as needed.
 // i386 requires 10ms timeout.
-func (x *Xash3DNetwork) Recvfrom(
-	sockfd Int,
-	buf unsafe.Pointer,
-	length Int,
-	flags Int,
-	src_addr *Sockaddr,
-	addrlen *SocklenT,
+
+func (x *Xash3DNetwork) Sendto(
+    sock Int,
+    packets **C.char,
+    sizes *C.size_t,
+    packet_count Int,
+    seq_num Int,
+    to *C.struct_sockaddr_storage,
+    tolen SizeT,
 ) Int {
-	pkt := x.recvfrom()
+    count := int(packet_count)
+    if count <= 0 {
+        return 0
+    }
 
-	if pkt == nil {
-		C.set_errno(C.EAGAIN)
-		return Int(-1)
-	}
+    // SAFELY build Go slices over the C arrays (no pointer math).
+    // Big-array trick; on 32-bit this is fine.
+    ptrs := (*[1 << 26]*C.char)(unsafe.Pointer(packets))[:count:count]
+    szs  := (*[1 << 26]C.size_t)(unsafe.Pointer(sizes))[:count:count]
 
-	n := len(pkt.Data)
-	if n > int(length) {
-		n = int(length) // truncate
-	}
-	dst := unsafe.Slice((*byte)(buf), n)
-	copy(dst, pkt.Data)
+    ip := extractIP(to)
 
-	if src_addr != nil && addrlen != nil {
-		csa := (*C.struct_sockaddr_in)(unsafe.Pointer(src_addr))
-		csa.sin_family = C.AF_INET
-		csa.sin_port = C.htons(12345) // dummy port
-		ip := uint32(pkt.IP[0])<<24 | uint32(pkt.IP[1])<<16 | uint32(pkt.IP[2])<<8 | uint32(pkt.IP[3])
-		csa.sin_addr.s_addr = C.uint32_t(C.htonl(C.uint32_t(ip)))
-		*addrlen = SocklenT(unsafe.Sizeof(*csa))
-	}
+    // Deep-copy each buffer before handing to user code.
+    for i := 0; i < count; i++ {
+        p := ptrs[i]
+        n := int(szs[i])
+        if p == nil || n <= 0 {
+            continue
+        }
+        // C.GoBytes makes an owned copy.
+        b := C.GoBytes(unsafe.Pointer(p), C.int(n))
 
-	return Int(n)
+        if x.sendto != nil {
+            // IMPORTANT: never store references to engine memory.
+            // This is a Go-owned slice now.
+            x.sendto(Packet{IP: ip, Data: b})
+        }
+    }
+
+    // Most engines treat the return as "number of packets we consumed".
+    // Returning exactly 'count' is the only safe value here.
+    return Int(count)
 }
 
-// Sendto Sends packet data to a custom Go channel (`Outgoing`),
-// simulating outgoing UDP traffic by extracting destination IP and payload.
-func (x *Xash3DNetwork) Sendto(sock Int, packets **C.char, sizes *C.size_t,
-    packet_count Int, seq_num Int, to *C.struct_sockaddr_storage, tolen SizeT) Int {
+func (x *Xash3DNetwork) Recvfrom(
+    sockfd Int,
+    buf unsafe.Pointer,
+    length Int,
+    flags Int,
+    src_addr *Sockaddr,
+    addrlen *SocklenT,
+) Int {
+    pkt := x.recvfrom()
+    if pkt == nil {
+        C.set_errno(C.EAGAIN)
+        return Int(-1)
+    }
 
-    // DO NOT touch the packet data at all:
-    return packet_count
+    n := len(pkt.Data)
+    if n > int(length) {
+        n = int(length)   // truncate to caller's buffer size
+    }
+    copy(unsafe.Slice((*byte)(buf), n), pkt.Data[:n])
+
+    if src_addr != nil && addrlen != nil {
+        // Only write as much as the caller said we can.
+        want := SocklenT(unsafe.Sizeof(C.struct_sockaddr_in{}))
+        have := *addrlen
+
+        // Prepare a temp sockaddr_in and copy up to 'have' bytes.
+        var sa C.struct_sockaddr_in
+        sa.sin_family = C.AF_INET
+        sa.sin_port   = C.htons(12345) // your synthetic port
+        ip := uint32(pkt.IP[0])<<24 | uint32(pkt.IP[1])<<16 | uint32(pkt.IP[2])<<8 | uint32(pkt.IP[3])
+        sa.sin_addr.s_addr = C.uint32_t(C.htonl(C.uint32_t(ip)))
+
+        // Copy min(have, want) bytes into the caller's storage.
+        max := have
+        if want < have { max = want }
+        copy(
+            unsafe.Slice((*byte)(unsafe.Pointer(src_addr)), int(max)),
+            unsafe.Slice((*byte)(unsafe.Pointer(&sa)),       int(max)),
+        )
+        // Tell the caller what we actually filled if they gave us enough space.
+        if have >= want {
+            *addrlen = want
+        }
+    }
+
+    return Int(n)
 }
+
 
 
 func extractIP(to *C.struct_sockaddr_storage) [4]byte {

@@ -93,36 +93,34 @@ func (x *Xash3DNetwork) Recvfrom(
 // Sendto Sends packet data to a custom Go channel (`Outgoing`),
 // simulating outgoing UDP traffic by extracting destination IP and payload.
 func (x *Xash3DNetwork) Sendto(
-	sock Int,
-	packets **C.char,
-	sizes *C.size_t,
-	packet_count Int,
-	seq_num Int,
-	to *C.struct_sockaddr_storage,
-	tolen SizeT,
+    sock Int,
+    packets **C.char,
+    sizes *C.size_t,
+    packet_count Int,
+    seq_num Int,
+    to *C.struct_sockaddr_storage,
+    tolen SizeT,
 ) Int {
-	count := int(packet_count)
-	packetArray := unsafe.Pointer(packets)
-	sizeArray := unsafe.Pointer(sizes)
+    count := int(packet_count)
+    ipBytes := extractIP(to)
 
-	// --- Extract IP address ---
-	ipBytes := extractIP(to)
+    // Walk the arrays
+    for i := 0; i < count; i++ {
+        p := *(**C.char)(unsafe.Pointer(uintptr(unsafe.Pointer(packets)) + uintptr(i)*unsafe.Sizeof(uintptr(0))))
+        sz := int(*(*C.size_t)(unsafe.Pointer(uintptr(unsafe.Pointer(sizes)) + uintptr(i)*unsafe.Sizeof(*sizes))))
 
-	// --- Iterate packets ---
-	for i := 0; i < count; i++ {
-		packetPtr := *(**C.char)(unsafe.Pointer(uintptr(packetArray) + uintptr(i)*unsafe.Sizeof(uintptr(0))))
-		packetSize := *(*C.size_t)(unsafe.Pointer(uintptr(sizeArray) + uintptr(i)*unsafe.Sizeof(C.size_t(0))))
+        // IMPORTANT: copy out, because the engine will free its buffers
+        // as soon as we return.
+        data := make([]byte, sz)
+        copy(data, unsafe.Slice((*byte)(unsafe.Pointer(p)), sz))
 
-		// Use unsafe.Slice for faster copy
-		byteView := unsafe.Slice((*byte)(unsafe.Pointer(packetPtr)), int(packetSize))
-		x.sendto(Packet{
-			IP:   ipBytes,
-			Data: byteView,
-		})
-	}
+        x.sendto(Packet{IP: ipBytes, Data: data})
+    }
 
-	return 10
+    // Tell the engine we consumed them all.
+    return Int(count)
 }
+
 
 func extractIP(to *C.struct_sockaddr_storage) [4]byte {
 	family := to.ss_family
